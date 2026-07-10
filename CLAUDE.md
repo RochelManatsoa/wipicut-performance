@@ -22,10 +22,10 @@ Site vitrine premium pour **Olona Sport Experts** — **cabinet international de
 ## Déploiement — cible o2switch
 
 - **Runtime Node.js 20.20.2** (voir `.nvmrc` + `engines` dans `package.json`).
-- Hébergement o2switch (cPanel / Passenger). **Ne pas** réintroduire les patterns OVH (`output: "export"`, `server.js` custom Express, `package.deploy.json`).
-- `next.config.ts` utilise `output: "standalone"` — Next génère `.next/standalone/server.js` + node_modules minimal, à copier dans l'Application root cPanel.
-- **Flow manuel git-based** : repo cloné côté serveur dans `~/src/wipicut-performance`, build via SSH avec la venv Node activée, puis `scripts/deploy-to-app.sh` copie le bundle vers `/home/mast9834/apps/wipicut-performance` et touche `tmp/restart.txt`.
-- Pas de CI/CD : chaque déploiement est déclenché à la main en SSH. Détail complet dans **`DEPLOY.md`**.
+- Hébergement o2switch (cPanel / Passenger). **Ne pas** réintroduire les patterns OVH (`output: "export"`, `package.deploy.json`, static export).
+- **`server.js` à la racine du repo** — point d'entrée Passenger, lance Next en mode production via `next({ dev: false })`.
+- **Flow manuel git-based** : le repo est cloné directement dans l'Application root cPanel (`/home/mast9834/apps/wipicut-performance`). Un déploiement = `git pull && npm ci && npm run build && touch tmp/restart.txt`.
+- Pas de CI/CD, pas d'output standalone, pas de script de copie : tout tourne depuis le repo. Détail complet dans **`DEPLOY.md`**.
 
 ## Commandes
 
