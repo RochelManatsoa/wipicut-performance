@@ -23,9 +23,9 @@ Site vitrine premium pour **Olona Sport Experts** — **cabinet international de
 
 - **Runtime Node.js 20.20.2** (voir `.nvmrc` + `engines` dans `package.json`).
 - Hébergement o2switch (cPanel / Passenger). **Ne pas** réintroduire les patterns OVH (`output: "export"`, `server.js` custom Express, `package.deploy.json`).
-- `next.config.ts` utilise `output: "standalone"` — Next génère `.next/standalone/server.js` + node_modules minimal, ce qui évite tout `npm install` côté serveur.
-- Workflow CI : `.github/workflows/deploy.yml` (SSH + rsync + touch `tmp/restart.txt` pour Passenger).
-- Setup complet (secrets GitHub, config cPanel, debug) documenté dans **`DEPLOY.md`**.
+- `next.config.ts` utilise `output: "standalone"` — Next génère `.next/standalone/server.js` + node_modules minimal, à copier dans l'Application root cPanel.
+- **Flow manuel git-based** : repo cloné côté serveur dans `~/src/wipicut-performance`, build via SSH avec la venv Node activée, puis `scripts/deploy-to-app.sh` copie le bundle vers `/home/mast9834/apps/wipicut-performance` et touche `tmp/restart.txt`.
+- Pas de CI/CD : chaque déploiement est déclenché à la main en SSH. Détail complet dans **`DEPLOY.md`**.
 
 ## Commandes
 

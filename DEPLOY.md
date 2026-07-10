@@ -1,70 +1,140 @@
-# Déploiement — o2switch (Passenger)
+# Déploiement — o2switch (git + build serveur)
 
-Workflow GitHub Actions : `.github/workflows/deploy.yml`.
-Déclenchement : push sur `main`, ou manuel via l'onglet Actions (`workflow_dispatch`).
+Le repo est cloné directement sur le serveur o2switch. Chaque déploiement =
+`git pull` + `npm ci` + `npm run build` + copie de l'output standalone dans
+l'Application root cPanel + redémarrage Passenger.
 
-## 1. Secrets GitHub à configurer
+- **Repo GitHub** : https://github.com/RochelManatsoa/wipicut-performance
+- **Répertoire source (clone)** : `/home/mast9834/src/wipicut-performance`
+- **Application root cPanel** : `/home/mast9834/apps/wipicut-performance`
+- **Node venv** : `/home/mast9834/nodevenv/apps/wipicut-performance/20/bin/activate`
 
-Repo → Settings → Secrets and variables → Actions → **New repository secret**.
+Les deux répertoires sont **séparés volontairement** : le clone contient les
+sources + node_modules dev, l'app root ne contient que le runtime standalone.
 
-| Nom | Valeur | Notes |
-|-----|--------|-------|
-| `SSH_HOST` | hôte SSH o2switch | ex. `nodeXX.o2switch.net` — visible dans cPanel → SSH Access |
-| `SSH_USER` | login cPanel | ton nom d'utilisateur cPanel |
-| `SSH_PORT` | port SSH | o2switch utilise souvent un port custom, à vérifier dans cPanel |
-| `SSH_KEY` | clé privée SSH (PEM) | voir §2 |
-| `DEPLOY_PATH` | chemin absolu de l'app Node | ex. `/home/USER/apps/wipicut-performance` — c'est **l'Application root** de ton app cPanel |
+---
 
-## 2. Générer la paire SSH
+## Premier déploiement
 
-Sur ta machine (ou dans un shell éphémère) :
+Toutes les commandes ci-dessous s'exécutent en SSH sur o2switch.
+
+### 1. Cloner le repo
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/o2switch_wipicut -C "gh-actions-wipicut" -N ""
+mkdir -p ~/src
+cd ~/src
+git clone https://github.com/RochelManatsoa/wipicut-performance.git
+cd wipicut-performance
 ```
 
-- Ajouter le **contenu de `~/.ssh/o2switch_wipicut.pub`** dans cPanel → SSH Access → Manage SSH Keys → *Import* (nom libre, puis *Manage → Authorize*).
-- Copier le **contenu de `~/.ssh/o2switch_wipicut`** (la clé privée, en-têtes comprises) dans le secret GitHub `SSH_KEY`.
+> Si le repo devient privé plus tard : `git clone https://<TOKEN>@github.com/RochelManatsoa/wipicut-performance.git` avec un PAT GitHub *fine-grained*.
 
-## 3. Vérifier l'app Node.js cPanel
+### 2. Activer la venv Node 20
 
-Puisque l'app est déjà en place, valider :
-
-- **Node.js version** : `20.20.2` (ou branche 20 récente).
-- **Application root** : identique à `DEPLOY_PATH`.
-- **Application startup file** : `server.js` — c'est celui qu'`output: "standalone"` génère et que le workflow uploade.
-- **Environment variable** `NODE_ENV=production` (recommandé).
-
-Sur o2switch, Passenger reste actif en permanence ; le redémarrage se fait via `touch tmp/restart.txt` (le workflow le fait à chaque déploiement).
-
-## 4. Ce que fait le workflow
-
-1. Checkout + setup Node depuis `.nvmrc` (20.20.2) + cache npm.
-2. `npm ci` puis `npm run lint` puis `npm run build`.
-3. Prépare `deploy/` avec la structure attendue par Passenger :
-   - `deploy/server.js`, `deploy/node_modules/`, `deploy/package.json`, `deploy/.next/server/` — depuis `.next/standalone/`
-   - `deploy/.next/static/` — depuis `.next/static/`
-   - `deploy/public/` — depuis `public/`
-4. `rsync -avz --delete` vers `DEPLOY_PATH` (protège `tmp/` et `.env.local` du serveur).
-5. `touch tmp/restart.txt` → Passenger recycle le worker.
-
-Grâce à `output: "standalone"`, **aucun `npm install` n'est nécessaire côté serveur** : Next embarque uniquement les deps runtime dans le bundle.
-
-## 5. Variables d'environnement runtime
-
-À placer dans `<DEPLOY_PATH>/.env.local` **directement sur le serveur** (le workflow exclut ce fichier du rsync). Exemples :
-
-```
-NODE_ENV=production
-# BREVO_API_KEY=xxx
-# AIRTABLE_API_KEY=xxx
+```bash
+source /home/mast9834/nodevenv/apps/wipicut-performance/20/bin/activate
+node -v   # doit renvoyer v20.x
 ```
 
-Ne jamais committer ce fichier — il est déjà dans `.gitignore`.
+### 3. Nettoyer l'Application root (placeholder cPanel)
 
-## 6. Debug
+Depuis n'importe où :
 
-- **Le workflow échoue au `ssh-keyscan`** : port SSH incorrect, ou hôte pas accessible depuis GitHub → tester `ssh -p PORT USER@HOST` depuis un poste externe.
-- **`rsync: … Permission denied`** : la clé publique n'a pas été autorisée dans cPanel (Manage SSH Keys → Authorize).
-- **Le site sert l'ancienne version** : vérifier que `tmp/restart.txt` a bien été touché après le rsync et que l'app cPanel est en `Started`.
-- **502 après déploiement** : consulter les logs de l'app dans cPanel → Node.js Selector → Open Logs. Souvent une variable d'env manquante ou un chemin `DEPLOY_PATH` mal aligné.
+```bash
+cd /home/mast9834/apps/wipicut-performance
+ls -la
+rm -rf node_modules server.js public
+[ -f package.json ] && rm package.json
+[ -f app.js ] && rm app.js
+# Ne pas toucher: tmp/, .htaccess (s'il existe), .env* (s'il existe)
+```
+
+### 4. Installer les deps + build
+
+```bash
+cd ~/src/wipicut-performance
+npm ci
+npm run build
+```
+
+Le build produit `.next/standalone/`, `.next/static/`, tout est prêt.
+
+### 5. Déployer vers l'app root
+
+```bash
+bash scripts/deploy-to-app.sh
+```
+
+Le script :
+- vide `/home/mast9834/apps/wipicut-performance/` (préserve `tmp/`, `.env*`, `.htaccess`)
+- copie `.next/standalone/*` → app root
+- copie `.next/static` → `app_root/.next/static`
+- copie `public` → `app_root/public`
+- `touch tmp/restart.txt` → Passenger recycle
+
+### 6. Vérifier
+
+Ouvrir l'URL de l'app (Application URL configurée dans cPanel → *Setup Node.js App*).
+
+Si 502 :
+
+```bash
+# Test manuel du server.js standalone
+source /home/mast9834/nodevenv/apps/wipicut-performance/20/bin/activate
+cd /home/mast9834/apps/wipicut-performance
+node server.js
+```
+
+Ctrl+C ensuite. Les erreurs de boot s'affichent directement.
+
+Vérifier aussi les logs cPanel → *Setup Node.js App* → **Logs**.
+
+---
+
+## Déploiements suivants
+
+```bash
+cd ~/src/wipicut-performance
+git pull
+source /home/mast9834/nodevenv/apps/wipicut-performance/20/bin/activate
+npm ci
+npm run build
+bash scripts/deploy-to-app.sh
+```
+
+Ou tout enchaîné en une ligne :
+
+```bash
+cd ~/src/wipicut-performance && \
+  git pull && \
+  source /home/mast9834/nodevenv/apps/wipicut-performance/20/bin/activate && \
+  npm ci && \
+  npm run build && \
+  bash scripts/deploy-to-app.sh
+```
+
+## Config Application Node.js (cPanel)
+
+cPanel → **Setup Node.js App** → l'app *wipicut-performance* → **Edit** :
+
+- **Node.js version** : 20.20.2
+- **Application root** : `/home/mast9834/apps/wipicut-performance`
+- **Application startup file** : `server.js` (celui généré par standalone)
+- **Environment variables** : `NODE_ENV = production`
+
+## Fichiers runtime
+
+- **`.env.local`** — variables API/secrets, à créer manuellement dans
+  `/home/mast9834/apps/wipicut-performance/.env.local`. Préservé par
+  `deploy-to-app.sh` à chaque redéploiement.
+- **`tmp/`** — utilisé par Passenger (`tmp/restart.txt`). Ne pas toucher.
+
+## Debug
+
+| Symptôme | Cause probable | Action |
+|----------|----------------|--------|
+| 502 après restart | server.js crashe au boot | Voir logs cPanel + `node server.js` manuel |
+| Assets 404 (CSS/JS) | `.next/static/` pas copié | Relancer `bash scripts/deploy-to-app.sh` |
+| Vieille version servie | Restart n'a pas eu lieu | Vérifier `tmp/restart.txt` récent + app *Started* |
+| `npm ci` échoue | Node venv pas activée | `source /home/…/20/bin/activate` avant |
+| `git pull` demande login | Repo privé sans PAT | Reconfigurer le remote avec `<TOKEN>@github.com/…` |
