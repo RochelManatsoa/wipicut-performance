@@ -1,24 +1,16 @@
-// Point d'entrée Passenger (cPanel Node.js Selector).
-// Lance Next en mode production, avec le request handler standard.
+// Point d'entrée Passenger (o2switch).
+// Démarre Next.js en production sur le port fourni par Passenger.
 const { createServer } = require("http");
-const { parse } = require("url");
 const next = require("next");
 
 const port = parseInt(process.env.PORT || "3000", 10);
-const app = next({ dev: false, dir: __dirname });
+const hostname = "127.0.0.1";
+
+const app = next({ dev: false, hostname, port });
 const handle = app.getRequestHandler();
 
-app
-  .prepare()
-  .then(() => {
-    createServer((req, res) => {
-      const parsedUrl = parse(req.url, true);
-      handle(req, res, parsedUrl);
-    }).listen(port, () => {
-      console.log(`> Next.js ready on port ${port}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Next.js failed to start", err);
-    process.exit(1);
+app.prepare().then(() => {
+  createServer((req, res) => handle(req, res)).listen(port, () => {
+    console.log(`▲ Next.js prêt sur http://${hostname}:${port}`);
   });
+});
